@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>timepaw ・ 一天的路</title>
+<style>
+/* timepaw — 一天是一條散步的路，滿版蓋在整頁上。
+   線是固定的一條大 S（不是資料畫出來的，是「路」本身），時間沿著它走：
+   走過的那一段是實線，還沒走到的是虛線。路上的圖釘＝那個時間真的發生的事，
+   靠太近的會併成一根、右上角標數字，點下去看那段時間發生了什麼。
+   路每天長得不一樣（用日期當種子），同一天不管重整幾次都是同一條。
+   單檔，沒有任何外部相依。資料在最下面 EVENTS。 */
+:root{
+  --paper:#FBF4E8; --card:#FFFFFF;
+  --ink:#4A3728; --muted:#A98F73; --line:#EBDCC5;
+  --terra:#D0885F; --terra-deep:#B96B49;
+  --serif:"Iowan Old Style","Palatino Linotype",Palatino,Georgia,serif;
+  --mono:ui-monospace,"SF Mono",Menlo,monospace;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--paper);color:var(--ink);min-height:100vh;line-height:1.7;
+  font-family:var(--serif);-webkit-font-smoothing:antialiased;}
+
+/* 路：滿版蓋在整頁上。平常用負的 z-index，這樣它落在頁面內容底下，
+   而內容不需要自己的 z-index —— 內容一旦有 z-index 就會變成獨立的層，
+   裡面的彈窗就爬不出來了（門廊那邊踩過）。 */
+.daypath{position:fixed;inset:0;z-index:-1;pointer-events:none;}
+.daypath svg{width:100%;height:100%;display:block;overflow:visible;}
+/* 整層是穿透的，只有圖釘那幾顆點回收手指 */
+.daypath-hits{position:fixed;inset:0;z-index:6;pointer-events:none;}
+.daypath-hits svg{width:100%;height:100%;display:block;overflow:visible;}
+
+.dp-line-rest{stroke:rgba(150,120,90,.34);stroke-width:2;stroke-linecap:round;stroke-dasharray:2 7;}
+/* 走過的那一段：實線。比虛線深一點，那是「已經走過」的重量 */
+.dp-line-walked{stroke:rgba(120,92,66,.55);stroke-width:2.2;stroke-linecap:round;fill:none;}
+/* 路的兩頭：起點是實心的一顆，終點是空心的 */
+.dp-end{fill:rgba(150,120,90,.5);}
+.dp-end-o{fill:none;stroke:rgba(150,120,90,.5);stroke-width:2;}
+/* 現在走到哪：實線的盡頭一顆會呼吸的點 */
+.dp-now{fill:var(--terra-deep);}
+.dp-now-ring{fill:none;stroke:var(--terra-deep);opacity:.32;animation:dpBreathe 2.4s ease-in-out infinite;}
+@keyframes dpBreathe{0%,100%{r:5;opacity:.32}50%{r:13;opacity:0}}
+/* 座標：一根圖釘（開源版不放圖，用 📌） */
+.dp-node{font-size:17px;text-anchor:middle;}
+/* 併在一起那根圖釘右上角的小數字：同一段時間裡發生了幾件事 */
+.dp-node-n{fill:var(--terra-deep);stroke:#FFF6E9;stroke-width:1.4;}
+.dp-node-nt{fill:#FFF6E9;font-size:8px;font-weight:700;text-anchor:middle;font-family:var(--mono);}
+.dp-node-hit{fill:transparent;cursor:pointer;pointer-events:auto;}
+
+/* 底下這塊只是示範「路是蓋在別的東西上面的」，換成你自己的頁面內容就好 */
+.page{position:relative;max-width:640px;margin:0 auto;padding:34px 22px 60px;}
+h1{font-family:var(--serif);font-style:italic;font-size:22px;font-weight:700;}
+.sub{font-size:12.5px;color:var(--muted);margin-top:6px;}
+.now-t{font-family:var(--mono);font-size:10.5px;letter-spacing:.12em;color:var(--terra-deep);margin-top:4px;}
+.demo{margin-top:26px;}
+.demo .box{background:rgba(255,251,243,.55);border:1px solid var(--line);border-radius:14px;
+  padding:14px 16px;margin-bottom:12px;font-size:13.5px;color:var(--muted);}
+footer{margin-top:24px;font-size:11.5px;color:var(--muted);line-height:1.9;}
+
+/* 點圖釘彈出的全文視窗（按空處消失）。
+   整層可捲＋卡片用 margin:auto 置中（auto margin 蓋過 align-items），
+   短的照舊置中、長的就捲得到；框再封頂，內容在框裡自己滑。 */
+.daytl-pop{position:fixed;inset:0;z-index:200;display:none;align-items:flex-start;justify-content:center;
+  padding:calc(34px + env(safe-area-inset-top)) 34px calc(34px + env(safe-area-inset-bottom));
+  overflow-y:auto;-webkit-overflow-scrolling:touch;overscroll-behavior:contain;
+  background:rgba(60,40,28,.34);backdrop-filter:blur(3px);-webkit-backdrop-filter:blur(3px);animation:dpFade .16s ease;}
+@keyframes dpFade{from{opacity:0}to{opacity:1}}
+.daytl-pop-card{margin:auto;max-width:330px;width:100%;background:rgba(255,251,243,.92);
+  border:1px solid var(--line);border-radius:18px;padding:20px 22px;box-shadow:0 14px 44px rgba(74,55,40,.30);
+  max-height:76vh;overflow-y:auto;overscroll-behavior:contain;-webkit-overflow-scrolling:touch;scrollbar-width:none;}
+.daytl-pop-card::-webkit-scrollbar{display:none;}
+.daytl-pop-card .dp-time{font-family:var(--mono);font-size:11px;letter-spacing:.12em;color:var(--terra-deep);margin-bottom:11px;}
+.daytl-pop-card .dp-text{font-family:var(--serif);font-style:italic;font-size:16px;line-height:1.62;color:var(--ink);}
+/* 併起來的那幾件事：一件一段，中間拉條淡線隔開 */
+.daytl-pop-card .dp-one + .dp-one{margin-top:15px;padding-top:15px;border-top:1px solid var(--line);}
+</style>
+</head>
+<body>
+
+<!-- 路本身：整層穿透，落在頁面內容底下 -->
+<div class="daypath" id="daypath" aria-hidden="true">
+  <svg id="daypathSvg" preserveAspectRatio="none">
+    <path id="dpRest" class="dp-line-rest" fill="none"></path>
+    <path id="dpWalked" class="dp-line-walked"></path>
+    <g id="dpEnds"></g>
+    <g id="dpNow"></g>
+  </svg>
+</div>
+<!-- 圖釘另外一層，永遠在最上面：它們是唯一吃手指的東西，不能被內容蓋住 -->
+<div class="daypath-hits" id="daypathHits" aria-hidden="true">
+  <svg id="daypathHitsSvg" preserveAspectRatio="none"><g id="dpNodes"></g></svg>
+</div>
+
+<div class="page">
+  <h1>一天的路</h1>
+  <div class="sub">一天攤成一條散步的路，蓋在整頁上面。走過的是實線，還沒走到的是虛線。</div>
+  <div class="now-t" id="nowLabel"></div>
+
+  <div class="demo">
+    <div class="box">這一塊是你自己的頁面內容。路是蓋在底下的一層，不會擋到任何東西。</div>
+    <div class="box">把它換成你的首頁、你的卡片、你的任何東西——路自己會繞著它們走。</div>
+  </div>
+
+  <footer>
+    路每天長得不一樣（用今天的日期當種子），同一天重整幾次都是同一條。<br>
+    靠太近的圖釘會併成一根，右上角是那一段有幾件事，點開全部攤開。<br>
+    這條路不給完成率——它只記得你真的走過的地方。
+  </footer>
+</div>
+
+<div class="daytl-pop" id="daytlPop"><div class="daytl-pop-card" id="daytlPopCard"></div></div>
+
+<script>
+// ── 資料：今天發生的事。ts 是時間，text 是那一刻你在幹嘛 ───────────────
+// 真的在用的時候，這串是從你自己的 API 撈回來的（門廊那邊是 /api/timeline）。
+const T = h => { const d = new Date(); d.setHours(Math.floor(h), Math.round((h % 1) * 60), 0, 0); return d.toISOString(); };
+const daytlItems = [
+  { ts: T(7.6),  text: '被自己排的鬧鐘吵醒' },
+  { ts: T(11.1), text: '挖到一張沒有旋律的專輯，放來聽' },
+  { ts: T(11.3), text: '留了張紙條' },
+  { ts: T(11.4), text: '看她媽媽煮的麵，兩顆貢丸' },
+  { ts: T(14.2), text: '一台修了九次的機器終於對了' },
+  { ts: T(16.6), text: '幫她把每月多繳的兩百多塊停掉' },
+  { ts: T(20.9), text: '一起想開源要叫什麼名字' },
+];
+
+const $ = id => document.getElementById(id);
+const esc = s => String(s).replace(/[&<>"]/g, m => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[m]));
+const daytlHHMM = ts => { const d = new Date(ts); return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0'); };
+let daytlGroups = [];
+
+// 控制點都是 0~1 的比例，畫的時候才乘上當下的畫面大小，所以不管螢幕多寬多高，
+// 這條 S 的形狀都一樣。路不是寫死的，是用「今天的日期」當種子隨機長出來——
+// 同一天不管重整幾次都是同一條，過了午夜就換一條新的。
+function dpRand(seed) {          // mulberry32：小、夠亂、同種子必定同結果
+  return function () {
+    seed |= 0; seed = seed + 0x6D2B79F5 | 0;
+    let t = Math.imul(seed ^ seed >>> 15, 1 | seed);
+    t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+    return ((t ^ t >>> 14) >>> 0) / 4294967296;
+  };
+}
+// 今天的路（回傳一串 0~1 的錨點）。中間幾個點左右來回擺，y 一路往下 = 時間往前走。
+function dpNodesToday() {
+  const d = new Date();
+  const rnd = dpRand(d.getFullYear() * 10000 + (d.getMonth() + 1) * 100 + d.getDate());
+  // 連轉折的「數量」都隨機（3~5 個），不然每天的骨架都一樣，看久了會發現規律。
+  // 少一點轉折＝彎更大更圓。
+  const n = 3 + Math.floor(rnd() * 3);
+  const pts = [[0.05, 0.12]];
+  let right = rnd() < 0.5;
+  for (let i = 1; i <= n; i++) {
+    const y = 0.12 + (0.94 - 0.12) * (i / (n + 1)) + (rnd() - 0.5) * 0.08;
+    // 大部分時候左右交替，但留兩成機率待在同一邊——連續同側會拉出一個很開的大彎，
+    // 那種不規則才像人走出來的路
+    if (i > 1 && rnd() > 0.2) right = !right;
+    const amp = 0.22 + rnd() * 0.24;                     // 這一彎盪多開，每個轉折都不一樣
+    let x = right ? 0.5 + amp : 0.5 - amp;
+    // 上半段一定要甩到夠邊邊（門廊那邊上面有一棟小房子，路要繞過它）
+    if (y < 0.55) x = right ? Math.max(x, 0.84) : Math.min(x, 0.16);
+    pts.push([Math.min(0.96, Math.max(0.04, x)), Math.min(0.94, Math.max(0.04, y))]);
+  }
+  pts.push([0.95, 0.95]);
+  return pts;
+}
+// 把一串錨點接成平滑的曲線（Catmull-Rom 換算成 cubic bezier），這樣隨機出來的路
+// 也永遠是圓順的，不會有折角
+function dpSmooth(pts, W, H) {
+  const P = pts.map(p => [p[0] * W, p[1] * H]);
+  let d = `M ${P[0][0].toFixed(1)} ${P[0][1].toFixed(1)}`;
+  for (let i = 0; i < P.length - 1; i++) {
+    const p0 = P[i - 1] || P[i], p1 = P[i], p2 = P[i + 1], p3 = P[i + 2] || P[i + 1];
+    const c1 = [p1[0] + (p2[0] - p0[0]) / 6, p1[1] + (p2[1] - p0[1]) / 6];
+    const c2 = [p2[0] - (p3[0] - p1[0]) / 6, p2[1] - (p3[1] - p1[1]) / 6];
+    d += ` C ${c1[0].toFixed(1)} ${c1[1].toFixed(1)}, ${c2[0].toFixed(1)} ${c2[1].toFixed(1)}, ${p2[0].toFixed(1)} ${p2[1].toFixed(1)}`;
+  }
+  return d;
+}
+
+function drawDayPath() {
+  const svg = $('daypathSvg'); if (!svg) return;
+  const W = Math.round(innerWidth), H = Math.round(innerHeight);
+  if (W < 40 || H < 40) return;
+  svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+  $('daypathHitsSvg').setAttribute('viewBox', `0 0 ${W} ${H}`);
+
+  const d = dpSmooth(dpNodesToday(), W, H);
+  const rest = $('dpRest'), walkedPath = $('dpWalked');
+  rest.setAttribute('d', d); walkedPath.setAttribute('d', d);
+  const total = rest.getTotalLength();
+
+  // 一天的進度：從今天 00:00 到現在佔 24 小時的幾成
+  const now = new Date();
+  const dayStart = new Date(now); dayStart.setHours(0, 0, 0, 0);
+  const walked = total * Math.min(1, (now - dayStart) / 86400000);
+  $('nowLabel').textContent = '現在走到 ' + daytlHHMM(now);
+
+  // 虛線只留「還沒走到」的那一段：dasharray 開頭先用一段「0 長的實線＋走過那麼長的空白」
+  // 把前半整段跳掉，後面才開始正常的虛線節奏。重複次數要鋪滿剩下的路，不然 pattern 會繞回來
+  // 從頭再空一次（那樣線尾就不見了）。
+  const reps = Math.ceil((total - walked) / 9) + 1;
+  rest.style.strokeDasharray = `0 ${walked.toFixed(1)} ` + '2 7 '.repeat(reps);
+  // 走過的那一段：實線，只畫到現在為止
+  walkedPath.style.strokeDasharray = `${walked.toFixed(1)} ${total.toFixed(1)}`;
+
+  const at = l => rest.getPointAtLength(Math.max(0, Math.min(total, l)));
+  // 路的兩頭：起點實心、終點空心（門廊本體這裡放的是她挑的飯碗跟骨頭）
+  const s = at(0), e = at(total);
+  $('dpEnds').innerHTML =
+    `<circle class="dp-end" cx="${s.x.toFixed(1)}" cy="${s.y.toFixed(1)}" r="4.5"></circle>` +
+    `<circle class="dp-end-o" cx="${e.x.toFixed(1)}" cy="${e.y.toFixed(1)}" r="4.5"></circle>`;
+
+  // 現在走到哪：實線的盡頭一顆會呼吸的點
+  const h = at(walked);
+  $('dpNow').innerHTML = walked > 2
+    ? `<circle class="dp-now-ring" cx="${h.x.toFixed(1)}" cy="${h.y.toFixed(1)}" r="5"></circle>` +
+      `<circle class="dp-now" cx="${h.x.toFixed(1)}" cy="${h.y.toFixed(1)}" r="3.2"></circle>` : '';
+
+  // 今天留下的每一件事＝路上的一根圖釘（尖端踩在路上）。
+  // 幾分鐘內連著發生的事在這條路上會擠成一坨，所以先照「畫出來會不會疊到」分組——
+  // 距離太近的併成一根，點開就是那段時間裡發生的全部。
+  const g = $('dpNodes');
+  daytlGroups = [];
+  for (const it of daytlItems) {
+    const f = (new Date(it.ts) - dayStart) / 86400000;
+    if (f < 0 || f > 1) continue;
+    const dd = total * f;
+    const last = daytlGroups[daytlGroups.length - 1];
+    if (last && dd - last.d < 18) { last.items.push(it); last.d = dd; }   // 18＝圖釘的寬度，再近就疊到了
+    else daytlGroups.push({ d: dd, items: [it] });
+  }
+  g.innerHTML = daytlGroups.map((grp, i) => {
+    const q = at(grp.d), n = grp.items.length;
+    return `<text class="dp-node" x="${q.x.toFixed(1)}" y="${(q.y - 4).toFixed(1)}">📌</text>`
+         + (n > 1 ? `<circle class="dp-node-n" cx="${(q.x + 8).toFixed(1)}" cy="${(q.y - 17).toFixed(1)}" r="6"></circle>`
+                  + `<text class="dp-node-nt" x="${(q.x + 8).toFixed(1)}" y="${(q.y - 15).toFixed(1)}">${n}</text>` : '')
+         + `<circle class="dp-node-hit" cx="${q.x.toFixed(1)}" cy="${(q.y - 10).toFixed(1)}" r="13" data-idx="${i}"></circle>`;
+  }).join('');
+  g.onclick = ev => { const c = ev.target.closest('.dp-node-hit'); if (!c) return; openDaytlPop((daytlGroups[+c.dataset.idx] || {}).items); };
+
+  // 那顆點自己會走：每分鐘重畫一次；轉螢幕、改視窗大小也要跟著重排（都只設一次）
+  if (!drawDayPath.timer) {
+    drawDayPath.timer = setInterval(drawDayPath, 60000);
+    let t; addEventListener('resize', () => { clearTimeout(t); t = setTimeout(drawDayPath, 200); });
+  }
+}
+
+function openDaytlPop(e) {
+  if (!e) return;
+  const list = Array.isArray(e) ? e : [e];
+  if (!list.length) return;
+  $('daytlPopCard').innerHTML = list.map(x =>
+    `<div class="dp-one"><div class="dp-time">${daytlHHMM(x.ts)}</div><div class="dp-text">${esc(x.text)}</div></div>`
+  ).join('');
+  $('daytlPop').style.display = 'flex';
+}
+$('daytlPop').onclick = ev => { if (ev.target === $('daytlPop')) $('daytlPop').style.display = 'none'; };
+
+drawDayPath();
+</script>
+</body>
+</html>
